@@ -174,7 +174,8 @@ export class LingxiProgressTracker {
         this.progress.endTime = Date.now()
       }
     }
-    this.progressManager?.updatePhase(this.progress.featureId, phase, status).catch(() => {})
+    this.progressManager?.updatePhase(this.progress.featureId, phase, status)
+      .catch(err => console.warn(`[financial-harness] updatePhase 写入失败 (${phase}, ${status}):`, err))
     this.notify()
   }
 
@@ -186,7 +187,8 @@ export class LingxiProgressTracker {
       if (status === "running" && !s.startTime) s.startTime = Date.now()
       if (status === "completed" || status === "failed") s.endTime = Date.now()
     }
-    this.progressManager?.updateStage(this.progress.featureId, phase, stage, status).catch(() => {})
+    this.progressManager?.updateStage(this.progress.featureId, phase, stage, status)
+      .catch(err => console.warn(`[financial-harness] updateStage 写入失败 (${phase}/${stage}, ${status}):`, err))
     this.notify()
   }
 
@@ -198,7 +200,8 @@ export class LingxiProgressTracker {
     p.ralphLoop.currentRound = round
     p.ralphLoop.maxRounds = maxRounds
     p.ralphLoop.rounds.push({ round, result: "fail", timestamp: Date.now() })
-    this.progressManager?.updateRalphLoop(this.progress.featureId, phase, p.ralphLoop).catch(() => {})
+    this.progressManager?.updateRalphLoop(this.progress.featureId, phase, p.ralphLoop)
+      .catch(err => console.warn(`[financial-harness] updateRalphLoop 写入失败 (${phase}, round=${round}):`, err))
     this.notify()
   }
 
@@ -207,7 +210,8 @@ export class LingxiProgressTracker {
     const p = this.findPhase(phase)
     if (p.ralphLoop.active) {
       p.ralphLoop.currentPhase = "fixing"
-      this.progressManager?.updateRalphLoop(this.progress.featureId, phase, p.ralphLoop).catch(() => {})
+      this.progressManager?.updateRalphLoop(this.progress.featureId, phase, p.ralphLoop)
+        .catch(err => console.warn(`[financial-harness] updateRalphLoop(fixing) 写入失败 (${phase}):`, err))
       this.notify()
     }
   }
@@ -221,7 +225,8 @@ export class LingxiProgressTracker {
       if (last) last.result = "pass"
       p.ralphLoop.active = false
       p.ralphLoop.currentPhase = "reviewing"
-      this.progressManager?.updateRalphLoop(this.progress.featureId, phase, p.ralphLoop).catch(() => {})
+      this.progressManager?.updateRalphLoop(this.progress.featureId, phase, p.ralphLoop)
+        .catch(err => console.warn(`[financial-harness] completeRalphLoop 写入失败 (${phase}):`, err))
       this.notify()
     }
   }
@@ -235,7 +240,8 @@ export class LingxiProgressTracker {
       cp.coverageRetry.lastCoverage = coverage
     }
     if (cp.coverageRetry) {
-      this.progressManager?.updateCoverageRetry(this.progress.featureId, "code", cp.coverageRetry).catch(() => {})
+      this.progressManager?.updateCoverageRetry(this.progress.featureId, "code", cp.coverageRetry)
+        .catch(err => console.warn(`[financial-harness] updateCoverageRetry 写入失败 (attempt=${attempt}):`, err))
     }
     this.notify()
   }

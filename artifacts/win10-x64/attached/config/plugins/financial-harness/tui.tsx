@@ -444,12 +444,32 @@ const tuiPlugin: TuiPlugin = async (api: TuiPluginApi) => {
   }
 
   // 监听 session 状态变化，在有活跃 session 时启动轮询
+  let idleStopTimer: ReturnType<typeof setTimeout> | null = null
+
   api.event.on("session.status", (event) => {
     if (event.properties.status.type === "busy") {
+      // busy 时取消待停止的定时器，确保轮询持续
+      if (idleStopTimer) {
+        clearTimeout(idleStopTimer)
+        idleStopTimer = null
+      }
       startPolling()
     } else if (event.properties.status.type === "idle") {
-      // idle 后延迟 10 秒停止轮询（给最后一次进度更新留时间）
-      setTimeout(stopPolling, 10000)
+      // idle 后 2 秒做一次强制刷新（捕获 pendingInjection 触发的最后写入）
+      setTimeout(async () => {
+        try {
+          const scanned = await readProgressFile(directory)
+          if (scanned.length > 0) {
+            const map: Record<string, ProgressData> = {}
+            for (const p of scanned) map[p.id] = p
+            setProgressMap(map)
+          }
+        } catch {
+          // 刷新失败静默忽略
+        }
+      }, 2000)
+      // idle 后延迟 30 秒停止轮询（给阶段切换和最终写入留足时间）
+      idleStopTimer = setTimeout(stopPolling, 30000)
     }
   })
 

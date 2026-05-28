@@ -25,15 +25,22 @@ export const updateStepTool = tool({
   async execute(args, ctx) {
     const dir = pluginDirectory || process.cwd()
     const pm = new UnifiedProgressManager(dir)
-    await pm.updateStage(args.feature, args.module, args.step, mapStatus(args.status))
 
     // ── Step 渐进注入：status=done 时自动注入下一个 Step ──
-    if (args.status !== "done" || !isPhaseId(args.module)) return ""
+    if (args.status !== "done" || !isPhaseId(args.module)) {
+      // 非 done 状态或非法 module，仅写入磁盘后返回
+      await pm.updateStage(args.feature, args.module, args.step, mapStatus(args.status))
+      return ""
+    }
 
     // 从所有 session 中找到匹配的 lingxi_harness session
     // 优先用 args.session_id，其次搜索已知 session，最后用 ctx 当前 session 兜底
-    const sessionId = args.session_id ?? findSessionByFeature(args.feature) ?? ctx.session?.id
-    if (!sessionId) return ""
+    const sessionId = args.session_id ?? findSessionByFeature(args.feature) ?? ctx?.session?.id
+    if (!sessionId) {
+      // 无 session 上下文，仅写入磁盘
+      await pm.updateStage(args.feature, args.module, args.step, mapStatus(args.status))
+      return ""
+    }
 
     const state = getState(sessionId)
 
@@ -82,7 +89,13 @@ export const updateStepTool = tool({
     }
 
     const tracker = lingxiTrackers.get(sessionId)
-    tracker?.updateStage(args.module, args.step, "completed")
+    if (tracker) {
+      // tracker 存在时由它统一写入磁盘（内部有 progressManager），避免双实例竞争
+      tracker.updateStage(args.module, args.step, "completed")
+    } else {
+      // tracker 不存在时用独立 pm 兜底写入
+      await pm.updateStage(args.feature, args.module, args.step, "completed")
+    }
 
     // ── 容错：lingxiStepQueue 在 session 重启后可能丢失，从 pipeline 重建 ──
     if (!state.lingxiStepQueue) {
@@ -108,7 +121,11 @@ export const updateStepTool = tool({
     if (nextStep) {
       // 还有下一个 Step，注入它（延迟到 session idle 后）
       state.lingxiCurrentStep = nextStep
-      tracker?.updateStage(args.module, nextStep, "running")
+      if (tracker) {
+        tracker.updateStage(args.module, nextStep, "running")
+      } else {
+        await pm.updateStage(args.feature, args.module, nextStep, "running")
+      }
 
       try {
         const { LingxiOrchestrator } = await import("../lingxi/orchestrator.js")
@@ -130,9 +147,19 @@ export const updateStepTool = tool({
         console.error(`[financial-harness] Step 注入准备失败 (${args.module}/${nextStep}):`, err)
       }
     } else {
-      // 当前阶段所有 Step 已完成（延迟到 session idle 后注入提示）
+      // 当前阶段所有 Step 已完成
       state.lingxiCurrentStep = undefined
-      const phaseCompleteText = `${args.module} 阶段所有 Step 已完成。请调用 update-progress(feature="${state.lingxiFeatureId}", featureName="${state.lingxiFeatureTitle ?? state.lingxiFeatureId}", module="${args.module}", status="done") 进入下一阶段。`
+
+      // ★ P0-1：直接写入 Phase 完成状态，不再依赖 Agent 调用 update-progress
+      if (tracker) {
+        tracker.updatePhase(args.module as PhaseId, "completed")
+      } else {
+        await pm.updatePhase(args.feature, args.module, "completed")
+      }
+      console.warn(`[financial-harness] 阶段 ${args.module} 所有 Step 完成，已自动标记 Phase completed`)
+
+      // 仍然注入提示触发阶段切换（file-tracker 中的 phase-transition 逻辑依赖 update-progress 调用）
+      const phaseCompleteText = `${args.module} 阶段所有 Step 已完成，阶段状态已自动标记为完成。请调用 update-progress(feature="${state.lingxiFeatureId}", featureName="${state.lingxiFeatureTitle ?? state.lingxiFeatureId}", module="${args.module}", status="done") 触发下一阶段切换。`
       state.pendingInjection = { type: "phase-complete", sessionId, text: phaseCompleteText }
       console.warn(`[financial-harness] 阶段完成提示已排队，等待 session idle: ${args.module}`)
     }
